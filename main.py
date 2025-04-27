@@ -1,4 +1,5 @@
 import argparse
+import glob
 from locale import normalize
 import os
 from x import visualize_3d_mesh, visualize_3d_vertices
@@ -153,7 +154,7 @@ def download_and_extract():
         # Extract the zip file
         print("Extracting zip file...")
         with zipfile.ZipFile(output_zip, 'r') as zip_ref:
-            zip_ref.extractall("./")
+            zip_ref.extractall("./background")
         
         # Remove the temporary zip file
         # print("Cleaning up...")
@@ -165,6 +166,66 @@ def download_and_extract():
         print(f"An error occurred: {str(e)}")
         if os.path.exists(output_zip):
             os.remove(output_zip)
+
+def download_and_extract_background():
+    """Download zip file from Google Drive and extract it to background directory"""
+    
+    # Google Drive file ID
+    file_id = "1c7FjVnKslM5G72T97v0RnQPY7hBo15WO"
+    
+    # Create temporary zip file name
+    output_zip = "temp_download_background.zip"
+    
+    # Define background directory
+    background_dir = "./background"
+    
+    # Check if background directory already exists and has files
+    if os.path.exists(background_dir) and os.listdir(background_dir):
+        print("Background directory already exists and contains files, skipping download.")
+        return
+    
+    try:
+        # Create background directory if it doesn't exist
+        os.makedirs(background_dir, exist_ok=True)
+        
+        # Download the file
+        print("Downloading file from Google Drive...")
+        url = f"https://drive.google.com/uc?id={file_id}"
+        gdown.download(url, output_zip, quiet=False)
+        
+        # Extract the zip file
+        print(f"Extracting zip file to {background_dir}...")
+        with zipfile.ZipFile(output_zip, 'r') as zip_ref:
+            # Get list of files in zip
+            file_list = zip_ref.namelist()
+            
+            # Extract all files
+            for file in file_list:
+                # Extract only image files
+                if file.lower().endswith(('.png', '.jpg', '.jpeg')):
+                    zip_ref.extract(file, background_dir)
+                    print(f"Extracted: {file}")
+        
+        # Count extracted files
+        extracted_files = len([f for f in os.listdir(background_dir) 
+                             if f.lower().endswith(('.png', '.jpg', '.jpeg'))])
+        print(f"Successfully extracted {extracted_files} images to {background_dir}")
+        
+        # Remove the temporary zip file
+        # print("Cleaning up temporary files...")
+        # if os.path.exists(output_zip):
+        #     os.remove(output_zip)
+        #     print(f"Removed temporary zip file: {output_zip}")
+        
+        print("Download and extraction completed successfully!")
+        
+    except Exception as e:
+        print(f"An error occurred: {str(e)}")
+        # Clean up on error
+        if os.path.exists(output_zip):
+            os.remove(output_zip)
+            print("Cleaned up temporary zip file")
+        raise  # R
 
 def init_renderer(camera, shader, image_size, faces_per_pixel):
     raster_settings = RasterizationSettings(image_size=image_size, faces_per_pixel=faces_per_pixel) #, bin_size = 50)
@@ -220,12 +281,31 @@ def get_camera_views():
     }
     return views
 
-def setup_weak_render(image_size, faces_per_pixel,device): #@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+def setup_weak_render_dessie(image_size, faces_per_pixel,device): #@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+    # render the view
+    R = torch.tensor([[-1, 0, 0],[0, -1, 0],[0, 0, 1]]).repeat(1, 1, 1).to(device)
+    T = torch.zeros(3).repeat(1, 1).to(device)
+    fov = 2 * np.arctan(image_size/ (5000. * 2)) * 180 / np.pi
+    cameras = OpenGLPerspectiveCameras(zfar=350, fov=fov, R=R, T=T, device=device)
+    renderer = init_renderer(cameras,
+                             shader=SoftPhongShader(
+                                    cameras=cameras,
+                                    lights= AmbientLights(device=device),
+                                    device=device,
+                                    blend_params=BlendParams(sigma=1e-4, gamma=1e-4, background_color= (1, 1, 1)),
+                                ),
+                             image_size=image_size,faces_per_pixel=faces_per_pixel,)
+    return cameras, renderer
+
+def setup_weak_render(image_size, faces_per_pixel,device, animal_type): #@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
     # render the view
     view_type = 'back'  # or 'side' or 'angle'
     R = get_camera_views()[view_type].repeat(1, 1).to(device)
     # Adjust T to move camera back and slightly up
-    T = torch.tensor([0, -1, 4.0]).to(device)  # [x, y, z]: z controls distance
+    if animal_type == 'equidae':
+        T = torch.tensor([0, 0, 3.5]).to(device)  # [x, y, z]: z controls distance
+    else:
+        T = torch.tensor([0, 0, 2.5]).to(device)  # [x, y, z]: z controls distance
     # fov = 2 * np.arctan(image_size/ (5000. * 2)) * 180 / np.pi
     # cameras = OpenGLPerspectiveCameras(
     #     zfar=600, 
@@ -283,16 +363,12 @@ def render_image_mask_and_save_with_preset_render(renderer, cameras, mesh,image_
     max_xyz = verts.max(dim=0).values
     center = (min_xyz + max_xyz) / 2
     size = (max_xyz - min_xyz)
-    mesh.offset_verts_(-center)
+    # mesh.offset_verts_(-center)
 
 
     init_images_tensor, fragments = renderer(mesh) # images
-    np.savez("../scripts/test.npz", image=init_images_tensor)
-    print(f"init_images_tensor.shape: {init_images_tensor.shape}")
-    image = init_images_tensor[0, ..., :4].cpu().numpy()
-    plt.imshow(image)
-    plt.axis('off')
-    plt.show()
+    # np.savez("../scripts/test.npz", image=init_images_tensor)
+    
     # get mask
     mask_image_tensor = init_images_tensor[...,[-1]].clone()
     mask_image_tensor[mask_image_tensor > 0] = 1.
@@ -375,7 +451,7 @@ class AnimalPipe(Dataset):
         self.get_predefinedata()
         self.get_texture()
         self.get_rotation_angle()
-        # self.get_background()
+        self.get_background()
 
     def get_model(self):
         self.smal_model = {}
@@ -403,7 +479,8 @@ class AnimalPipe(Dataset):
 
     def setup_weak_render(self, device, image_size, init_dist=2.2):
         # Get a batch of viewing angles.
-        cameras, renderer = setup_weak_render(image_size, faces_per_pixel=1, device=device)
+        cameras, renderer = setup_weak_render(image_size, faces_per_pixel=1, device=device, animal_type=self.ANIMAL)
+        # cameras, renderer = setup_weak_render_dessie(image_size, faces_per_pixel=1, device=device)
         return cameras, renderer
 
     def get_vt_ft(self):
@@ -477,8 +554,8 @@ class AnimalPipe(Dataset):
             self.pose_training = torch.from_numpy(np.array(pose1[non_subset_indices], dtype=np.float32))
             self.pose_key = non_subset_indices
 
-            print(f"pose_training.shape: {self.pose_training.shape}")
-            print(f"pose_key.shape: {self.pose_key.shape}")
+            # print(f"pose_training.shape: {self.pose_training.shape}")
+            # print(f"pose_key.shape: {self.pose_key.shape}")
             # self.pose_valid = torch.from_numpy(np.concatenate([pose1[validindex], pose2[validindex]])).float()
             self.pose_valid = torch.from_numpy(np.array(pose1[validindex], dtype=np.float32))
             self.pose_training_label = np.concatenate([[1] * 465 * self.num_texture, [2] * 429 * self.num_texture, [3] * 130 * self.num_texture, [4] * 92 * self.num_texture, [0] * non_subset_indices.shape[0]])
@@ -513,10 +590,15 @@ class AnimalPipe(Dataset):
                 self.texture_trainindex[key] = np.setdiff1d(np.arange(len(self.texture[key])), validindex)
                 self.texture_validindex[key] = np.array(validindex)
 
-
+    def get_background(self):
+        download_and_extract_background()
+        if not hasattr(self, "background"):
+            self.background_train = sorted(glob.glob(os.path.join('background', '*.jpg')))
+            self.background_trainingindex = [i for i in range(len(self.background_train))]
+            self.background_transform = transforms.Compose([transforms.Resize((self.args.imgsize, self.args.imgsize)),transforms.ToTensor()])
         
     def get_rotation_angle(self): 
-        self.rot_model_4gt = axis_angle_to_matrix(torch.Tensor([np.radians(90), 0, 0])).unsqueeze(0)
+        self.rot_model_4gt = axis_angle_to_matrix(torch.Tensor([np.radians(-90), 0, 0])).unsqueeze(0)
 
 
     def get_obj_filename(self, name):
@@ -588,9 +670,9 @@ class AnimalPipe(Dataset):
         pose_selected, poseclass = self.random_SMAL_pose_params(flag=poseflag, data_batch_size=data_batch_size,
                                                                 interval=interval)
         texture_selected, texture_class = self.random_texture(flag=textureflag, data_batch_size=data_batch_size)
-        save_pose_and_texture(pose_selected, f"../scripts/pose_selected_{self.ANIMAL}.npz")
+        # save_pose_and_texture(pose_selected, f"../scripts/pose_selected_{self.ANIMAL}.npz")
 
-        # pose_selected = self.get_pose_gt(pose_selected, cameraindex)
+        pose_selected = self.get_pose_gt(pose_selected, cameraindex)
         verts, _, _ = self.smal_model[self.ANIMAL](beta=shape_selected.to(self.device),
                                       theta=pose_selected.to(self.device),
                                       trans=torch.zeros((data_batch_size, 3)).to(self.device))
@@ -606,14 +688,14 @@ class AnimalPipe(Dataset):
         # print(f"texture_selected.shape: {texture_selected.shape}")
         # print(f"texture_verts.shape: {self.vt[self.ANIMAL].shape}")
         # print(f"verts.shape: {verts.shape} and faces.shape: {self.faces.repeat(verts.shape[0], 1, 1).shape}")
-        verts = transform_vertices(verts)
+        # verts = transform_vertices(verts)
         textures = TexturesUV(maps=texture_selected,
                               faces_uvs=self.ft[self.ANIMAL].repeat(data_batch_size, 1, 1),
                               verts_uvs=self.vt[self.ANIMAL].repeat(data_batch_size, 1, 1), sampling_mode="nearest").to(self.device)
         torch_mesh = Meshes(verts=verts, faces=self.faces.repeat(verts.shape[0], 1, 1), textures=textures).to(
             self.device)
-        visualize_3d_mesh(verts.reshape(-1, 3), self.faces)
-        visualize_texture_mesh(torch_mesh[0])
+        # visualize_3d_mesh(verts.reshape(-1, 3), self.faces)
+        # visualize_texture_mesh(torch_mesh[0])
         
         return torch_mesh
 
@@ -630,10 +712,12 @@ class AnimalPipe(Dataset):
             # # sample pose_selected.shape[0] camera angles
             # print(pose_selected.shape)
             angle_random = np.random.random(size = pose_selected.shape[0]) *360
+        # print(f"angle_random: {angle_random}")
         rot_candidate_4gt = axis_angle_to_matrix(torch.Tensor([[0, -np.radians(i), 0] for i in angle_random]))
         pose_updated_matrix = torch.matmul(torch.matmul(rot_candidate_4gt, self.rot_model_4gt),pose_origianl_matrix)  
         pose_update = rotmat_to_axis_angle(pose_updated_matrix.unsqueeze(1),number=1)  
         pose_selected[:, :3] = pose_update
+        # print(f"pose_update: {pose_update}")
         #### pose update done #####################################
         return pose_selected
 
@@ -664,8 +748,8 @@ class AnimalPipe(Dataset):
             shape_selected = torch.tensor(np.random.normal(0, 1, size=(data_batch_size, 9))).float()
             shape_class = np.array([0  for i in range(data_batch_size)])
         else:
-            # shape_selected = torch.tensor(np.random.normal(0, 0.1, size=(data_batch_size, 20))).float()
-            shape_selected = torch.zeros((data_batch_size, 20)).float()
+            shape_selected = torch.tensor(np.random.normal(0, 0.2, size=(data_batch_size, 20))).float()
+            # shape_selected = torch.zeros((data_batch_size, 20)).float()
             shape_class = np.array([0  for i in range(data_batch_size)])
         return shape_selected, shape_class
 
@@ -683,25 +767,80 @@ class AnimalPipe(Dataset):
         # print(f"texture_key: {texture_key}, texture_class: {texture_class}")
         init_texture_tensor =self.texture[texture_key][texture_class]
         return init_texture_tensor, texture_class
+    
+    def random_background(self, flag, data_batch_size): 
+        if self.FLAG == 'TEST':
+            selected_background_set = self.background_train
+            selected_background_index = self.background_trainingindex
+        elif self.FLAG == 'TRAIN':
+            selected_background_set = self.background_train
+            selected_background_index = self.background_trainingindex
+        else:
+            selected_background_set = self.background_train
+            selected_background_index = self.background_trainingindex
+
+        index = np.random.randint(low=0, high=int(len(selected_background_set)), size=(data_batch_size))
+        background_name = [selected_background_set[i] for i in index]
+        return background_name
+    
+    def change_background(self,init_images_tensor, mask_image_tensor, background_name): 
+        '''
+        mask_image_tensor [B,1,256,256]; init_images_tensor[..., :3] [B,3,256,256]; background_name: [B]
+        '''
+        new_images = torch.zeros_like(init_images_tensor)
+        # Iterate over each image in the batch
+        for i in range(init_images_tensor.shape[0]):
+            # Read the background image
+            background_PIL = Image.open( background_name[i]).convert("RGB")
+            background_tensor = self.background_transform(background_PIL)
+            mask_expanded = mask_image_tensor[i].expand_as(init_images_tensor[i])
+            # Use the mask to select foreground
+            foreground = init_images_tensor[i] * mask_expanded
+            # Use the inverted mask to select background
+            background = background_tensor * (1 - mask_expanded)
+            # Combine
+            new_images[i] = foreground + background        
+        return new_images
 
     def obtain_SMAL_pair_w_texture(self, label, data_batch_size, poseflag, shapeflag, textureflag, interval=8,cameraindex=0): 
         if label ==  1:
             pose_selected, poseclass = self.random_SMAL_pose_params(flag=poseflag, data_batch_size=data_batch_size,
                                                                     interval=interval) 
-            # pose_selected[1, :3] = pose_selected[0, :3]  # with the same root
+            pose_selected[1, :3] = pose_selected[0, :3]  # with the same root
             shape_selected, shapeclass = self.random_SMAL_shape_params(flag=shapeflag, data_batch_size=1)
             shape_selected = shape_selected.repeat(data_batch_size, 1)
             shapeclass = shapeclass.repeat(data_batch_size)
             texture_selected, textureclass = self.random_texture(flag=textureflag, data_batch_size=1)
             texture_selected = texture_selected.repeat(data_batch_size, 1, 1, 1)
             textureclass = textureclass.repeat(data_batch_size)
-        
-        save_pose_and_texture(pose_selected, f"../scripts/pose_selected_{self.ANIMAL}.npz")
-        # pose_selected = self.get_pose_gt(pose_selected, cameraindex)
+        elif label == 2:  # label to 2: appearance space: change appearance; only one SMAL one cam, but two texture
+            shape_selected, shapeclass = self.random_SMAL_shape_params(flag=shapeflag, data_batch_size=data_batch_size)
+            texture_selected, textureclass = self.random_texture(flag=textureflag, data_batch_size=data_batch_size)
+
+            pose_selected, poseclass = self.random_SMAL_pose_params(flag=poseflag, data_batch_size=1, interval=interval)
+            pose_selected = pose_selected.repeat(data_batch_size, 1)
+            poseclass = poseclass.repeat(data_batch_size)
+        elif label == 3:  # label to 3: cam space: change cam ; only one SMAL one texture but two cam
+            shape_selected, shapeclass = self.random_SMAL_shape_params(flag=shapeflag, data_batch_size=1)
+            shape_selected = shape_selected.repeat(data_batch_size, 1)
+            shapeclass = shapeclass.repeat(data_batch_size)
+            pose_selected, poseclass = self.random_SMAL_pose_params(flag=poseflag, data_batch_size=1, interval=interval)
+            pose_selected = pose_selected.repeat(data_batch_size, 1)
+            poseclass = poseclass.repeat(data_batch_size)
+            texture_selected, textureclass = self.random_texture(flag=textureflag, data_batch_size=1)
+            texture_selected = texture_selected.repeat(data_batch_size, 1, 1, 1)
+            textureclass = textureclass.repeat(data_batch_size)
+        # save_pose_and_texture(pose_selected, f"../scripts/pose_selected_{self.ANIMAL}.npz")
+        # print(f"pose_selected before update: {pose_selected[:, :3]}")
+        pose_selected = self.get_pose_gt(pose_selected, cameraindex)
+        # print(f"Label: {label}")
+        # print(f"pose_selected after update: {pose_selected[:, :3]}")
         verts, _, _ = self.smal_model[self.ANIMAL](beta=shape_selected.to(self.device),
                                       theta=pose_selected.to(self.device),
                                       trans=torch.zeros((data_batch_size, 3)).to(self.device))
-        print(f"verts.shape: {verts.shape}")
+        # print(f"verts.shape: {verts.shape}")
+
+        
         v = verts[0].reshape(-1, 3)
         # visualize_3d_mesh(v, self.faces)
         trans = self.get_trans_gt(verts, shapeflag)
@@ -766,17 +905,19 @@ class AnimalPipe(Dataset):
             label = 2  # label to 2: appearance space: change appearance
         else:
             label = 3  # label to 3: cam space: change cam
+            
         if label == 1 or label == 2:
             cameraindex = 0 
         elif label == 3:
             cameraindex = 1
 
-        label = 1
+        
     
         meshes, shapeclass, poseclass, textureclass, shape_selected, pose_selected, trans = self.obtain_SMAL_pair_w_texture(label, data_batch_size, poseflag = None,
                                                                                       shapeflag= None, textureflag = None,
                                                                                       interval=self.num_texture,
                                                                                       cameraindex=cameraindex)
+        
         return meshes, shapeclass, poseclass, textureclass, label, shape_selected, pose_selected, trans
     
 
@@ -814,9 +955,31 @@ class AnimalPipe(Dataset):
         mask_image_tensor = mask_image_tensor.permute(0, 3, 1, 2)  
         temp_images_tensor = init_images_tensor[..., :3].permute(0, 3, 1, 2)  
 
-        # if self.args.background:
-        #     background_name = self.random_background(flag = None, data_batch_size = self.args.data_batch_size)
-        #     temp_images_tensor = self.change_background(temp_images_tensor, mask_image_tensor, background_name)
+        if self.args.background:
+            background_name = self.random_background(flag = None, data_batch_size = self.args.data_batch_size)
+            temp_images_tensor = self.change_background(temp_images_tensor, mask_image_tensor, background_name)
+
+        # print(f"init_images_tensor.shape: {temp_images_tensor.shape}")
+        image = temp_images_tensor.cpu().numpy()
+        image = np.transpose(image, (0, 2, 3, 1))
+        
+        # Create a figure with two subplots side by side
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
+        
+        # Plot first image
+        ax1.imshow(image[0])
+        ax1.axis('off')
+        ax1.set_title('Image 1')
+        
+        # Plot second image
+        ax2.imshow(image[1])
+        ax2.axis('off')
+        ax2.set_title('Image 2')
+        
+        # Adjust layout and display
+        plt.tight_layout()
+        plt.show()
+        save_plotted_image(image[0], f"../W3Z_AnimalClassifier/{self.ANIMAL}.jpg")
 
         if self.transform:
             init_images_tensor = self.process_image(temp_images_tensor)  
@@ -1217,14 +1380,44 @@ def save_pose_and_texture(pose_selected, save_dir, index=0):
     
     print(f"Saved pose and texture to {save_path}")
 
+def save_plotted_image(image, save_path, dpi=300):
+    """
+    Save the plotted image to file
+    
+    Args:
+        image: Image array or tensor
+        save_path: Path where to save the image
+        dpi: Resolution for the saved image
+    """
+    # Create directory if it doesn't exist
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    
+    # Convert tensor to numpy if needed
+    if isinstance(image, torch.Tensor):
+        image = image.cpu().numpy()
+    
+    # Create figure with tight layout
+    plt.figure(figsize=(10, 10))
+    plt.imshow(image)
+    plt.axis('off')  # Remove axes
+    
+    # Save with tight bounds and no padding
+    plt.savefig(save_path, 
+                bbox_inches='tight',
+                pad_inches=0,
+                dpi=dpi)
+    plt.close()  # Close the figure to free memory
+    
+    print(f"Saved image to {save_path}")
+
 if __name__ == "__main__":
     args = argparse.ArgumentParser()
     args.add_argument("--animal", type=str, default="hippopotamus")
     args.add_argument("--device", type=str, default="cuda")
     args.add_argument('--imgsize', type=int, default=256, help='number of workers')
-    args.add_argument('--data_batch_size', type=int, default=1 , help='batch size; before is 36')
+    args.add_argument('--data_batch_size', type=int, default=2 , help='batch size; before is 36')
     args.add_argument('--useinterval', type=int, default=8, help='number of interval of the data')
-
+    args.add_argument('--background', type=bool, default=False, help='background')
 
 
 
@@ -1235,33 +1428,33 @@ if __name__ == "__main__":
 
 
     args = args.parse_args()
-    for i in ["felidae",  "bovidae", "hippopotamus","equidae", "canidae" ]:
+    for i in ["equidae", "felidae",  "bovidae", "hippopotamus", "canidae" ]:
         pipeline = AnimalPipe(args, args.device, 100, FLAG='TRAIN', ANIMAL=i)
         sample = pipeline[0]  # or any index
-        sample1 = sample[0]
-        image1 = sample1[0]
-        print(f"image1.shape: {image1.shape}")  # shape: (256, 256, 4)
-        image1 = transforms.ToPILImage()(image1)
-        # image = image1[0, ..., :3].cpu().numpy()
+        # sample1 = sample[0]
+        # image1 = sample1[0]
+        # print(f"image1.shape: {image1.shape}")  # shape: (256, 256, 4)
+        # image1 = transforms.ToPILImage()(image1)
+        # # image = image1[0, ..., :3].cpu().numpy()
     
-        # image2 = sample1[1]
-        # print(sample1.shape)
-        # print(image1.shape)
-        # print(image2.shape)
-        # Convert from torch to numpy if needed
-        # if isinstance(image1, torch.Tensor):
-        #     image1 = image1.permute(1, 2, 0).numpy()
-            # image2 = image2.permute(1, 2, 0).numpy()
+        # # image2 = sample1[1]
+        # # print(sample1.shape)
+        # # print(image1.shape)
+        # # print(image2.shape)
+        # # Convert from torch to numpy if needed
+        # # if isinstance(image1, torch.Tensor):
+        # #     image1 = image1.permute(1, 2, 0).numpy()
+        #     # image2 = image2.permute(1, 2, 0).numpy()
 
-        # Plot both
-        fig, axs = plt.subplots(1, 2, figsize=(10, 5))
-        axs[0].imshow(image1)
-        axs[0].set_title("Image 1")
-        axs[0].axis('off')
+        # # Plot both
+        # fig, axs = plt.subplots(1, 2, figsize=(10, 5))
+        # axs[0].imshow(image1)
+        # axs[0].set_title("Image 1")
+        # axs[0].axis('off')
 
-        # axs[1].imshow(image2)
-        # axs[1].set_title("Image 2")
-        # axs[1].axis('off')
+        # # axs[1].imshow(image2)
+        # # axs[1].set_title("Image 2")
+        # # axs[1].axis('off')
 
-        plt.tight_layout()
-        plt.show()
+        # plt.tight_layout()
+        # plt.show()
