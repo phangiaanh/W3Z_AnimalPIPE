@@ -1,8 +1,8 @@
-import argparse
+
 import glob
 from locale import normalize
 import os
-from x import visualize_3d_mesh, visualize_3d_vertices
+from W3Z_AnimalPIPE.x import visualize_3d_mesh, visualize_3d_vertices
 import torch
 from W3Z_AnimalSkeletons.smal_torch import SMAL
 from torch.utils.data import Dataset
@@ -41,7 +41,7 @@ from pytorch3d.renderer import (
     FoVPerspectiveCameras,
 )
 
-from CONSTANT import PLABELSNAME, PPOINTINDEX, ANIMAL3DPOINTINDEX, COMBINAPOINTINDEX
+from W3Z_AnimalPIPE.CONSTANT import PLABELSNAME, PPOINTINDEX, ANIMAL3DPOINTINDEX, COMBINAPOINTINDEX
 import trimesh
 
 def get_point(verts, flag = 'P', visible_verts= None):
@@ -905,7 +905,7 @@ class AnimalPipe(Dataset):
             label = 2  # label to 2: appearance space: change appearance
         else:
             label = 3  # label to 3: cam space: change cam
-            
+        # label = 3
         if label == 1 or label == 2:
             cameraindex = 0 
         elif label == 3:
@@ -960,26 +960,26 @@ class AnimalPipe(Dataset):
             temp_images_tensor = self.change_background(temp_images_tensor, mask_image_tensor, background_name)
 
         # print(f"init_images_tensor.shape: {temp_images_tensor.shape}")
-        image = temp_images_tensor.cpu().numpy()
-        image = np.transpose(image, (0, 2, 3, 1))
+        # image = temp_images_tensor.cpu().numpy()
+        # image = np.transpose(image, (0, 2, 3, 1))
         
-        # Create a figure with two subplots side by side
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
+        # # Create a figure with two subplots side by side
+        # fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
         
-        # Plot first image
-        ax1.imshow(image[0])
-        ax1.axis('off')
-        ax1.set_title('Image 1')
+        # # Plot first image
+        # ax1.imshow(image[0])
+        # ax1.axis('off')
+        # ax1.set_title('Image 1')
         
-        # Plot second image
-        ax2.imshow(image[1])
-        ax2.axis('off')
-        ax2.set_title('Image 2')
+        # # Plot second image
+        # ax2.imshow(image[1])
+        # ax2.axis('off')
+        # ax2.set_title('Image 2')
         
-        # Adjust layout and display
-        plt.tight_layout()
-        plt.show()
-        save_plotted_image(image[0], f"../W3Z_AnimalClassifier/{self.ANIMAL}.jpg")
+        # # Adjust layout and display
+        # plt.tight_layout()
+        # plt.show()
+        # save_plotted_image(image[0], f"../W3Z_AnimalClassifier/{self.ANIMAL}.jpg")
 
         if self.transform:
             init_images_tensor = self.process_image(temp_images_tensor)  
